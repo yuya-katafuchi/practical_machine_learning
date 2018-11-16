@@ -1,30 +1,120 @@
 ---
 title: "Practical Machine Learning Course Project"
 author: "Yuya Katafuchi"
-date: "12 November 2018"
+date: "15 November 2018"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+## Objective
+For this course project, we aim to predict the manner in exercise given the dataset consisting of a large amount of personal data obtained by accelerometers on the belt, forearm, arm and dumbell of six participants.
+
+## Load Package
+We load the caret package for the data preparation and analysis, the tidyverse package for data cleansing, and the readr package for the data loading.
+```{r}
+library(caret)
+library(readr)
+library(tidyverse)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Load Data
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+First of all, we load training and testing dataset.
 
-```{r cars}
-summary(cars)
+```{r message = FALSE, warning = FALSE}
+training <- read_csv("pml-training.csv")
+testing <- read_csv("pml-testing.csv")
+as.tibble(training)
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+Our target variable to predict is "classe", which is the performance of exercise and classified as 4 levels.
+```{r}
+training <- training %>% mutate(classe = factor(classe))
+table(training$classe)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Cleansing Data
+After looking the dataset structure, we found that some of columns is not useful for our prediction.
+```{r}
+training %>% select(X1, user_name, raw_timestamp_part_1, 
+                    raw_timestamp_part_2, cvtd_timestamp,
+                    new_window, num_window)
+```
+We then remove these columns for the accurate prediction.
+```{r}
+training_2 <- training %>% select(-X1, -user_name, -raw_timestamp_part_1,
+                                  -raw_timestamp_part_2, -cvtd_timestamp,
+                                  -new_window, -num_window)
+```
+As well as useless columns, we need to determinate which column as almost same features by cheking near-zero-variance.
+```{r}
+chk_variance <- nearZeroVar(training_2, saveMetrics = TRUE)
+head(chk_variance)
+```
+We then remove these TRUE columns by:
+```{r}
+training_3 <- training_2[, !chk_variance$nzv]
+```
+Again, we remove the useless column consisting NAs and blanks.
+```{r}
+NAcol <- training_3 %>% sapply(is.na) %>% apply(2, sum)
+training_df <- training_3[, NAcol == 0]
+training_df
+```
+After data cleansing, we have 49 features to predict classe.
+
+## Split Data
+To measure the out-of-sample error without possibilities to be overfitting, we create cross-validation set (20%) by:
+```{r}
+set.seed(145)
+training_split <- createDataPartition(training_df$classe, p = 0.8, list = FALSE)
+training_f <- training_df[training_split, ]
+cv_f <- training_df[-training_split, ]
+```
+
+## Data Cleansing for Testing Set
+We do the same cleansing as training set for test set.
+```{r}
+testing_2 <- testing %>% select(-X1, -user_name, -raw_timestamp_part_1,
+                                  -raw_timestamp_part_2, -cvtd_timestamp,
+                                  -new_window, -num_window)
+testing_3 <- testing_2[, !chk_variance$nzv]
+testing_f <- testing_3[, NAcol == 0]
+
+```
+
+
+## Learn Model
+Again, prediction target variable is "classe", which is the performance of exercise and classified as 4 levels. We then decide to use random forest, because of its easiness and power of multiple classification. To begin with, the model includes all of predictors in final dataset.
+```{r warning=FALSE}
+rf_full <- train(classe ~., data = training_f, method = "rf")
+rf_full$finalModel
+```
+
+## Less Features
+Second, we will estimate simpler model omitting location information with _x, _y, _z.
+```{r warning=FALSE}
+training_s_f <- training_f %>% select(roll_belt, roll_arm, roll_dumbbell, roll_forearm, 
+                                      pitch_belt, pitch_arm, pitch_dumbbell, pitch_forearm,
+                                      yaw_belt, yaw_arm, yaw_dumbbell, yaw_forearm,
+                                      total_accel_belt, total_accel_arm, total_accel_dumbbell,
+                                      total_accel_forearm, classe)
+rf_simple <- train(classe ~., data = training_s_f, method = "rf")
+rf_simple$finalModel
+```
+
+##Cross-Validation test
+Using cross validation set we made, we will check the prediction accuracy without taking look at test set.
+```{r}
+predict_full <- predict(rf_full, cv_f)
+predict_simple <- predict(rf_simple, cv_f)
+confusionMatrix(predict_full, cv_f$classe)
+confusionMatrix(predict_simple, cv_f$classe)
+```
+
+##Predict using test set
+Judging from above confusion matrix, we chose simpler specification to predict the test classe since it has reasonably high accuracy even though it contains less predictors.
+```{r}
+predict(rf_simple, testing_f)
+```
+
